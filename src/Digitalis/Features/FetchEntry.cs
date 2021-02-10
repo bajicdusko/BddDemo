@@ -4,27 +4,28 @@ using System.Threading.Tasks;
 using Digitalis.Infrastructure;
 using Digitalis.Infrastructure.Guards;
 using Digitalis.Infrastructure.Mediatr;
+using Digitalis.Infrastructure.Services;
 using Digitalis.Models;
 using FluentValidation;
 using MediatR;
-using Microsoft.AspNetCore.Http;
+using Raven.Client.Documents;
 using Raven.Client.Documents.Session;
 
 namespace Digitalis.Features
 {
     public class FetchEntry
     {
-        public record Query(string id) : IRequest<Entry>;
-
-        public class Auth : Auth<Query>
+        public class Query : AuthRequest<Entry>
         {
-            public Auth(IHttpContextAccessor ctx, IDocumentSession session) : base(ctx, session)
-            {
-            }
+            public string Id { get; set; }
+        }
 
-            public override void Authorize(Query request)
+        public class Auth : IAuth<Query, Entry>
+        {
+            public Auth(Authenticator authenticator)
             {
-                AuthorizationGuard.AffirmClaim(User, AppClaims.FetchEntry);
+                var user = authenticator.User;
+                AuthorizationGuard.AffirmClaim(user, AppClaims.FetchEntry);
             }
         }
 
@@ -32,22 +33,23 @@ namespace Digitalis.Features
         {
             public Validator()
             {
-                RuleFor(x => x.id).NotEmpty();
+                RuleFor(x => x.Id).NotEmpty();
             }
         }
 
         public class Handler : IRequestHandler<Query, Entry>
         {
-            private readonly IAsyncDocumentSession _session;
+            private readonly IDocumentStore _store;
 
-            public Handler(IAsyncDocumentSession session)
+            public Handler(IDocumentStore store)
             {
-                _session = session;
+                _store = store;
             }
 
             public async Task<Entry> Handle(Query query, CancellationToken cancellationToken)
             {
-                Entry entry = await _session.LoadAsync<Entry>(query.id, cancellationToken);
+                using var session = _store.OpenAsyncSession(new SessionOptions{ NoTracking = true });
+                Entry entry = await session.LoadAsync<Entry>(query.Id, cancellationToken);
 
                 if (entry == null)
                     throw new KeyNotFoundException();
